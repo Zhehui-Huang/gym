@@ -101,6 +101,45 @@ class LunarLander(gym.Env, EzPickle):
         # useful range is -1 .. +1, but spikes can be higher
         self.observation_space = spaces.Box(-np.inf, np.inf, shape=(8,), dtype=np.float32)
 
+        # fixtureDef
+        self.lander_fd = fixtureDef(
+            shape=polygonShape(vertices=[(x / SCALE, y / SCALE) for x, y in LANDER_POLY]),
+            density=5.0,
+            friction=0.1,
+            categoryBits=0x0010,
+            maskBits=0x001,  # collide only with ground
+            restitution=0.0)  # 0.99 bouncy
+
+        self.leg_fd = fixtureDef(
+            shape=polygonShape(box=(LEG_W / SCALE, LEG_H / SCALE)),
+            density=1.0,
+            restitution=0.0,
+            categoryBits=0x0020,
+            maskBits=0x001)
+
+        self.create_partcle_mass_35_fd = fixtureDef(
+            shape=circleShape(radius=2 / SCALE, pos=(0, 0)),
+            density=3.5,
+            friction=0.1,
+            categoryBits=0x0100,
+            maskBits=0x001,  # collide only with ground
+            restitution=0.3)
+
+        self.create_partcle_mass_07_fd = fixtureDef(
+            shape=circleShape(radius=2 / SCALE, pos=(0, 0)),
+            density=0.7,
+            friction=0.1,
+            categoryBits=0x0100,
+            maskBits=0x001,  # collide only with ground
+            restitution=0.3)
+
+        moon_w = VIEWPORT_W/SCALE
+        self.moon_fd = fixtureDef(
+                        shape = edgeShape(vertices=[(0, 0), (moon_w, 0)]),
+                        density=0,
+                        friction = 0.1)
+
+
         if self.continuous:
             # Action is two floats [main engine, left-right engines].
             # Main engine: -1..0 off, 0..+1 throttle from 50% to 100% power. Engine can't work with less than 50% power.
@@ -118,17 +157,36 @@ class LunarLander(gym.Env, EzPickle):
 
     def _destroy(self):
         if not self.moon: return
-        self.world.contactListener = None
+        try:
+            self.world.contactListener = None
+        except:
+            print('self.world.contactListener destroy, Fail')
+
         self._clean_particles(True)
-        self.world.DestroyBody(self.moon)
+
+        try:
+            self.world.DestroyBody(self.moon)
+        except:
+            print('self.world.DestroyBody(self.moon), Fail')
+
         self.moon = None
-        self.world.DestroyBody(self.lander)
+
+        try:
+            self.world.DestroyBody(self.lander)
+        except:
+            print('self.world.DestroyBody(self.lander), Fail')
+
         self.lander = None
-        self.world.DestroyBody(self.legs[0])
-        self.world.DestroyBody(self.legs[1])
+
+        try:
+            self.world.DestroyBody(self.legs[0])
+            self.world.DestroyBody(self.legs[1])
+        except:
+            print('self.world.DestroyBody(self.legs[0]), Fail')
 
     def reset(self):
         self._destroy()
+
         self.world.contactListener_keepref = ContactDetector(self)
         self.world.contactListener = self.world.contactListener_keepref
         self.game_over = False
@@ -151,32 +209,41 @@ class LunarLander(gym.Env, EzPickle):
         height[CHUNKS//2+2] = self.helipad_y
         smooth_y = [0.33*(height[i-1] + height[i+0] + height[i+1]) for i in range(CHUNKS)]
 
-        self.moon = self.world.CreateStaticBody(shapes=edgeShape(vertices=[(0, 0), (W, 0)]))
+        # self.moon = self.world.CreateStaticBody(shapes=edgeShape(vertices=[(0, 0), (W, 0)]))
+        self.moon = self.world.CreateStaticBody(fixtures = self.moon_fd)
+        
         self.sky_polys = []
+        # self.moon_edge = []
+        # self.moon_edge.append(self.moon.fixtures[0])
         for i in range(CHUNKS-1):
             p1 = (chunk_x[i], smooth_y[i])
             p2 = (chunk_x[i+1], smooth_y[i+1])
+
+            self.moon_fd.shape.vertices = [p1, p2]
+
+            tmp_edge = self.moon.CreateEdgeFixture(
+                vertices = self.moon_fd.shape.vertices
+            )
             self.moon.CreateEdgeFixture(
                 vertices=[p1,p2],
                 density=0,
                 friction=0.1)
+            # self.moon_edge.append(tmp_edge)
+
             self.sky_polys.append([p1, p2, (p2[0], H), (p1[0], H)])
 
         self.moon.color1 = (0.0, 0.0, 0.0)
         self.moon.color2 = (0.0, 0.0, 0.0)
 
         initial_y = VIEWPORT_H/SCALE
+
         self.lander = self.world.CreateDynamicBody(
             position=(VIEWPORT_W/SCALE/2, initial_y),
             angle=0.0,
-            fixtures = fixtureDef(
-                shape=polygonShape(vertices=[(x/SCALE, y/SCALE) for x, y in LANDER_POLY]),
-                density=5.0,
-                friction=0.1,
-                categoryBits=0x0010,
-                maskBits=0x001,   # collide only with ground
-                restitution=0.0)  # 0.99 bouncy
-                )
+            fixtures = self.lander_fd
+            )
+
+
         self.lander.color1 = (0.5, 0.4, 0.9)
         self.lander.color2 = (0.3, 0.3, 0.5)
         self.lander.ApplyForceToCenter( (
@@ -189,12 +256,7 @@ class LunarLander(gym.Env, EzPickle):
             leg = self.world.CreateDynamicBody(
                 position=(VIEWPORT_W/SCALE/2 - i*LEG_AWAY/SCALE, initial_y),
                 angle=(i * 0.05),
-                fixtures=fixtureDef(
-                    shape=polygonShape(box=(LEG_W/SCALE, LEG_H/SCALE)),
-                    density=1.0,
-                    restitution=0.0,
-                    categoryBits=0x0020,
-                    maskBits=0x001)
+                fixtures= self.leg_fd
                 )
             leg.ground_contact = False
             leg.color1 = (0.5, 0.4, 0.9)
@@ -223,17 +285,24 @@ class LunarLander(gym.Env, EzPickle):
         return self.step(np.array([0, 0]) if self.continuous else 0)[0]
 
     def _create_particle(self, mass, x, y, ttl):
-        p = self.world.CreateDynamicBody(
-            position = (x, y),
-            angle=0.0,
-            fixtures = fixtureDef(
-                shape=circleShape(radius=2/SCALE, pos=(0, 0)),
-                density=mass,
-                friction=0.1,
-                categoryBits=0x0100,
-                maskBits=0x001,  # collide only with ground
-                restitution=0.3)
+        p = None
+        if mass == 3.5:
+            p = self.world.CreateDynamicBody(
+                position = (x, y),
+                angle=0.0,
+                fixtures = self.create_partcle_mass_35_fd
                 )
+        elif mass == 0.7:
+            p = self.world.CreateDynamicBody(
+                position = (x, y),
+                angle=0.0,
+                fixtures = self.create_partcle_mass_07_fd
+                )
+        else:
+            print('Wrong')
+            import pdb
+            pdb.set_trace()
+
         p.ttl = ttl
         self.particles.append(p)
         self._clean_particles(False)
@@ -451,3 +520,4 @@ def demo_heuristic_lander(env, seed=None, render=False):
 
 if __name__ == '__main__':
     demo_heuristic_lander(LunarLander(), render=True)
+
